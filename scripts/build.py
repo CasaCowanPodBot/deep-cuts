@@ -74,7 +74,7 @@ def tts(text, key, hosts=None):
     }
     last_err = None
     for model in CONFIG["tts_models"]:
-        for attempt in range(6):
+        for attempt in range(3):  # free-tier daily quotas don't recover quickly; fall back to the next model
             req = urllib.request.Request(
                 API.format(model=model), data=json.dumps(body).encode(),
                 headers={"Content-Type": "application/json", "x-goog-api-key": key})
