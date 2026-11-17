@@ -1,10 +1,18 @@
 {
   "title": "Deep Cuts",
-  "description": "On-demand narrative episodes from just outside your usual lane. Written by Claude.",
-  "author": "Deep Cuts",
+  "description": "On-demand episodes from just outside your usual lane. A Casa Cowan Production, written by Claude.",
+  "author": "Casa Cowan Productions",
   "base_url": "https://casacowanpodbot.github.io/deep-cuts",
   "voice": "Charon",
-  "voice_style": "Narrate the following like a warm, conversational sports-and-culture podcast host, with natural pacing, emphasis, and a bit of wry energy:",
-  "tts_models": ["gemini-3.8-flash-tts", "gemini-3.1-flash-tts-preview", "gemini-2.5-flash-preview-tts"],
-  "seconds_between_requests": 8
+  "tts_models": [
+    "gemini-3.8-flash-tts",
+    "gemini-3.1-flash-tts-preview",
+    "gemini-2.5-flash-preview-tts"
+  ],
+  "seconds_between_requests": 8,
+  "default_format": "conversation",
+  "hosts": {
+    "Jack": "Charon",
+    "Nora": "Kore"
+  }
 }

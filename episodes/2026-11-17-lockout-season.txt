@@ -1,5 +1,6 @@
 title: Lockout Season
 description: Baseball's labor deal expires December 1. The owners want a salary cap, the players have never accepted one, and a lockout looks all but certain. What it means for teams, stars, and your offseason.
+format: narrative
 ---
 This is Deep Cuts. I'm your narrator. Today: Lockout Season. Baseball's labor war, and what it means for your team and your favorite stars.
 

@@ -7,8 +7,12 @@
 Episode file format (episodes/YYYY-MM-DD-slug.txt):
     title: Episode title
     description: One or two sentence summary.
+    format: conversation        (optional; "conversation" (default) or "narrative")
+    hosts: Jack=Charon, Nora=Kore   (optional; defaults to podcast.json "hosts")
     ---
     Script paragraphs separated by blank lines.
+    Conversation: every paragraph starts with a host name and a colon, e.g. "Jack: ...".
+    Narrative: plain paragraphs, read by the single narrator voice.
     A line containing only [PAUSE] marks a section break.
 """
 import base64, html, json, os, re, shutil, subprocess, sys, time, urllib.request, urllib.error
@@ -38,7 +42,7 @@ def parse_episode(path):
     return meta
 
 
-def chunks(body, limit=2400):
+def chunks(body, limit=2400, sep="\n\n"):
     """Split into sections at [PAUSE], then into <= limit char pieces at paragraph breaks."""
     out, cur = [], ""
     for section in re.split(r"\n\s*\[PAUSE\]\s*\n", body):
@@ -46,7 +50,7 @@ def chunks(body, limit=2400):
         for p in paras:
             if cur and len(cur) + len(p) + 2 > limit:
                 out.append((cur, False)); cur = ""
-            cur = f"{cur}\n\n{p}" if cur else p
+            cur = f"{cur}{sep}{p}" if cur else p
         # section break: close the chunk here (longer pause) if it is already reasonably long
         if cur and len(cur) > limit * 0.6:
             out.append((cur, True)); cur = ""
@@ -55,15 +59,18 @@ def chunks(body, limit=2400):
     return out
 
 
-def tts(text, key):
-    style = CONFIG.get("voice_style", "")
-    prompt = f"{style}\n\n{text}" if style else text
+def tts(text, key, hosts=None):
+    """hosts: dict of speaker name -> Gemini voice for two-host mode; None for single narrator.
+    Only the script text is sent: no style instructions, so nothing extra gets read aloud."""
+    if hosts:
+        speech = {"multiSpeakerVoiceConfig": {"speakerVoiceConfigs": [
+            {"speaker": name, "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": voice}}}
+            for name, voice in hosts.items()]}}
+    else:
+        speech = {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": CONFIG.get("voice", "Charon")}}}
     body = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "responseModalities": ["AUDIO"],
-            "speechConfig": {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": CONFIG.get("voice", "Charon")}}},
-        },
+        "contents": [{"parts": [{"text": text}]}],
+        "generationConfig": {"responseModalities": ["AUDIO"], "speechConfig": speech},
     }
     last_err = None
     for model in CONFIG["tts_models"]:
@@ -89,6 +96,27 @@ def tts(text, key):
     raise RuntimeError(f"TTS failed. Last error: {last_err}")
 
 
+def episode_hosts(ep):
+    """Return {name: voice} for conversation episodes, or None for narrative ones."""
+    if ep.get("format", CONFIG.get("default_format", "conversation")).lower() != "conversation":
+        return None
+    if ep.get("hosts"):
+        hosts = dict(h.strip().split("=", 1) for h in ep["hosts"].split(","))
+        hosts = {k.strip(): v.strip() for k, v in hosts.items()}
+    else:
+        hosts = dict(CONFIG["hosts"])
+    if len(hosts) != 2:
+        sys.exit(f"{ep['slug']}: conversation mode needs exactly two hosts, got {list(hosts)}")
+    for para in re.split(r"\n\s*\n", ep["body"]):
+        para = para.strip()
+        if not para or para == "[PAUSE]":
+            continue
+        name = para.split(":", 1)[0].strip()
+        if ":" not in para or name not in hosts:
+            sys.exit(f"{ep['slug']}: conversation paragraph must start with one of {list(hosts)} + ':' -> {para[:60]!r}")
+    return hosts
+
+
 def render(ep, key):
     tmp = ROOT / "tmp" / ep["slug"]; tmp.mkdir(parents=True, exist_ok=True)
     def silence(sec, name):
@@ -100,10 +128,12 @@ def render(ep, key):
     pieces = []
     if (ROOT / "assets" / "chime.wav").exists():
         pieces += [ROOT / "assets" / "chime.wav", silence(0.4, "lead.wav")]
-    parts = chunks(ep["body"])
+    hosts = episode_hosts(ep)
+    parts = chunks(ep["body"], sep="\n" if hosts else "\n\n")
+    print(f"  format: {'conversation ' + str(hosts) if hosts else 'narrative'}")
     for i, (text, section_end) in enumerate(parts):
         print(f"  chunk {i+1}/{len(parts)} ({len(text)} chars)")
-        pcm = tts(text, key)
+        pcm = tts(text, key, hosts)
         raw, wav = tmp / f"c{i}.pcm", tmp / f"c{i}.wav"
         raw.write_bytes(pcm)
         # Newer models return a WAV container; older ones return raw 24 kHz 16-bit PCM.
