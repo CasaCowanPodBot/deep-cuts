@@ -106,8 +106,10 @@ def render(ep, key):
         pcm = tts(text, key)
         raw, wav = tmp / f"c{i}.pcm", tmp / f"c{i}.wav"
         raw.write_bytes(pcm)
-        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "s16le", "-ar", str(SR), "-ac", "1",
-                        "-i", str(raw), str(wav)], check=True)
+        # Newer models return a WAV container; older ones return raw 24 kHz 16-bit PCM.
+        fmt = [] if pcm[:4] == b"RIFF" else ["-f", "s16le", "-ar", str(SR), "-ac", "1"]
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", *fmt, "-i", str(raw),
+                        "-ar", str(SR), "-ac", "1", "-c:a", "pcm_s16le", str(wav)], check=True)
         pieces += [wav, long_ if section_end else short]
         time.sleep(CONFIG.get("seconds_between_requests", 8))
     if (ROOT / "assets" / "chime.wav").exists():
