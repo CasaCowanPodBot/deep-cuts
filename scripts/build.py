@@ -59,40 +59,55 @@ def chunks(body, limit=2400, sep="\n\n"):
     return out
 
 
+def tts_bodies(text, hosts):
+    """Request bodies to try, in order. Newer models want each speaker turn as its own
+    part tagged with speech_metadata.speaker; older ones want one 'Name: line' text block."""
+    if not hosts:
+        speech = {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": CONFIG.get("voice", "Charon")}}}
+        return [("plain", [{"text": text}], speech)]
+    speech = {"multiSpeakerVoiceConfig": {"speakerVoiceConfigs": [
+        {"speaker": name, "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": voice}}}
+        for name, voice in hosts.items()]}}
+    tagged = []
+    for line in text.split("\n"):
+        name, _, words = line.partition(":")
+        if words.strip():
+            tagged.append({"text": words.strip(), "speechMetadata": {"speaker": name.strip()}})
+    return [("tagged", tagged, speech), ("plain", [{"text": text}], speech)]
+
+
 def tts(text, key, hosts=None):
     """hosts: dict of speaker name -> Gemini voice for two-host mode; None for single narrator.
     Only the script text is sent: no style instructions, so nothing extra gets read aloud."""
-    if hosts:
-        speech = {"multiSpeakerVoiceConfig": {"speakerVoiceConfigs": [
-            {"speaker": name, "voiceConfig": {"prebuiltVoiceConfig": {"voiceName": voice}}}
-            for name, voice in hosts.items()]}}
-    else:
-        speech = {"voiceConfig": {"prebuiltVoiceConfig": {"voiceName": CONFIG.get("voice", "Charon")}}}
-    body = {
-        "contents": [{"parts": [{"text": text}]}],
-        "generationConfig": {"responseModalities": ["AUDIO"], "speechConfig": speech},
-    }
     last_err = None
     for model in CONFIG["tts_models"]:
-        for attempt in range(3):  # free-tier daily quotas don't recover quickly; fall back to the next model
-            req = urllib.request.Request(
-                API.format(model=model), data=json.dumps(body).encode(),
-                headers={"Content-Type": "application/json", "x-goog-api-key": key})
-            try:
-                with urllib.request.urlopen(req, timeout=300) as r:
-                    data = json.load(r)
-                part = data["candidates"][0]["content"]["parts"][0]["inlineData"]
-                print(f"    ok via {model} ({part.get('mimeType')})")
-                return base64.b64decode(part["data"])
-            except urllib.error.HTTPError as e:
-                msg = e.read().decode(errors="replace")[:500]
-                last_err = f"{model}: HTTP {e.code} {msg}"
-                if e.code in (429, 500, 503):
-                    wait = 30 * (attempt + 1)
-                    print(f"    {e.code} from {model}, retrying in {wait}s"); time.sleep(wait); continue
-                print(f"    {last_err}"); break  # e.g. 404 unknown model -> try next model
-            except (KeyError, IndexError) as e:
-                last_err = f"{model}: unexpected response {str(data)[:300]}"; print("    " + last_err); break
+        for style, parts, speech in tts_bodies(text, hosts):
+            body = {"contents": [{"parts": parts}],
+                    "generationConfig": {"responseModalities": ["AUDIO"], "speechConfig": speech}}
+            outcome = None
+            for attempt in range(3):  # free-tier daily quotas don't recover quickly; fall back
+                req = urllib.request.Request(
+                    API.format(model=model), data=json.dumps(body).encode(),
+                    headers={"Content-Type": "application/json", "x-goog-api-key": key})
+                try:
+                    with urllib.request.urlopen(req, timeout=300) as r:
+                        data = json.load(r)
+                    part = data["candidates"][0]["content"]["parts"][0]["inlineData"]
+                    print(f"    ok via {model} [{style}] ({part.get('mimeType')})")
+                    return base64.b64decode(part["data"])
+                except urllib.error.HTTPError as e:
+                    msg = e.read().decode(errors="replace")[:400]
+                    last_err = f"{model} [{style}]: HTTP {e.code} {msg}"
+                    if e.code in (429, 500, 503):
+                        wait = 30 * (attempt + 1)
+                        print(f"    {e.code} from {model}, retrying in {wait}s"); time.sleep(wait)
+                        outcome = "quota"; continue
+                    print(f"    {last_err}"); outcome = "rejected"; break  # try the other format
+                except (KeyError, IndexError):
+                    last_err = f"{model} [{style}]: unexpected response {str(data)[:300]}"
+                    print("    " + last_err); outcome = "rejected"; break
+            if outcome == "quota":
+                break  # this model is out of quota; skip its other format and move to the next model
     raise RuntimeError(f"TTS failed. Last error: {last_err}")
 
 
