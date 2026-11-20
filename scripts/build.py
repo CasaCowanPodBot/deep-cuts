@@ -129,7 +129,7 @@ def render(ep, key):
     if (ROOT / "assets" / "chime.wav").exists():
         pieces += [ROOT / "assets" / "chime.wav", silence(0.4, "lead.wav")]
     hosts = episode_hosts(ep)
-    parts = chunks(ep["body"], sep="\n" if hosts else "\n\n")
+    parts = chunks(ep["body"], CONFIG.get("chunk_chars", 2400), sep="\n" if hosts else "\n\n")
     print(f"  format: {'conversation ' + str(hosts) if hosts else 'narrative'}")
     for i, (text, section_end) in enumerate(parts):
         print(f"  chunk {i+1}/{len(parts)} ({len(text)} chars)")
